@@ -1,0 +1,78 @@
+#!/bin/bash
+
+#File: testscript
+#Author: Andy Sayler
+#Modifier: Chris Sterling
+#Project: CSCI 3753 Programming Assignment 3
+#Create Date: 2012/03/09
+#Modify Date: 2012/03/29
+#Description:
+#	Bash script that is a wrapper for all the 
+
+
+#Before doing anything else, check to make sure that we are running this script as root
+if [ "$(whoami)" != "root" ]; then
+	echo "This script must be run with super user privledges."
+	echo "Usage: sudo ./testscript"
+	exit 1
+fi
+
+
+ITERATIONS=100000000
+BYTESTOCOPY=102400
+BLOCKSIZE=1024
+MAKE="make -s"
+
+NUM_PROCESSES=(100) #LOW MEDIUM HIGH
+SCHEDULER_TYPE=("SCHED_OTHER" "SCHED_FIFO" "SCHED_RR")
+NUMBER_OF_REPEATS=3 # How many times do you want to take benchmarks?
+
+RESULT_FILE="/home/user/Dropbox/Operating Systems/PA3/results.csv"
+
+INPUTFILESIZEMEGABYTES=1
+KILO=1024
+MEGA=`echo "$KILO * $KILO" | bc`
+INPUTFILESIZEBYTES=`echo "$MEGA * $INPUTFILESIZEMEGABYTES" | bc`
+INPUTBLOCKSIZEBYTES=$KILO
+INPUTBLOCKS=`echo "$INPUTFILESIZEBYTES / $INPUTBLOCKSIZEBYTES" | bc`
+
+
+echo Building code...
+$MAKE clean
+$MAKE
+
+x=1
+while [ $x -le ${NUM_PROCESSES[2]} ]
+do
+  echo "Creating rwinput-$x"
+  dd if=/dev/urandom of=./rwinput-$x bs=$INPUTBLOCKSIZEBYTES count=$INPUTBLOCKS > /dev/null 2>&1
+  x=$(( $x + 1 ))
+done
+
+
+
+#Echo out the header file for the CSV - overwrite any existing benchmarks
+echo "\"Process Type\",\"Scheduler Type\",Iterations,\"Num Simultaneous Processes\",Wall,User,System,CPU,I-Switched,V-switched" > "$RESULT_FILE"
+
+echo Starting test runs...
+
+
+for num_processes in "${NUM_PROCESSES[@]}"
+do
+	for scheduler_type in "${SCHEDULER_TYPE[@]}"
+	do
+		for (( i=1; i<=$NUMBER_OF_REPEATS; i++ )) #gather multiple data points about each type
+		do
+			echo "Calculating over $ITERATIONS iterations using $scheduler_type with $num_processes simultaneous process..."
+			
+			TIMEFORMAT="CPU BOUND,$scheduler_type,$ITERATIONS,$num_processes,%e,%U,%S,%P,%c,%w"
+			/usr/bin/time -f "$TIMEFORMAT" -o "$RESULT_FILE" -a ./pi-sched $ITERATIONS $scheduler_type $num_processes
+			
+			TIMEFORMAT="\"I/O BOUND\",$scheduler_type,1,$num_processes,%e,%U,%S,%P,%c,%w"
+			/usr/bin/time -f "$TIMEFORMAT" -o "$RESULT_FILE" -a ./rw $BYTESTOCOPY $BLOCKSIZE rwinput rwoutput $scheduler_type $num_processes
+			
+			TIMEFORMAT="MIXED,$scheduler_type,1,$num_processes,%e,%U,%S,%P,%c,%w"
+			/usr/bin/time -f "$TIMEFORMAT" -o "$RESULT_FILE" -a ./mixed $ITERATIONS $scheduler_type $num_processes
+		done
+	done
+done
